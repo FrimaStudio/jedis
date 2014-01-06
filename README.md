@@ -1,3 +1,8 @@
+## Frima Studio modifications ##
+We are using a forked version of the library to make Jedis's PubSub Thread-Safe.
+
+**EVERY MODIFICATION SHOULD BE DONE IN THE jedis-2.1.1-frima BRANCH!!!**
+
 # Jedis
 
 Jedis is a blazingly small and sane [Redis](http://github.com/antirez/redis "Redis") java client.
