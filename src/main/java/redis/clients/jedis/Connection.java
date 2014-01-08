@@ -52,6 +52,7 @@ public class Connection {
         try {
             socket.setSoTimeout(timeout);
             socket.setKeepAlive(false);
+            pipelinedCommands = 0;
         } catch (SocketException ex) {
             throw new JedisException(ex);
         }
@@ -203,10 +204,14 @@ public class Connection {
     }
 
     @SuppressWarnings("unchecked")
+    public List<Object> getRawMultiBulkReply() {
+        return (List<Object>) Protocol.read(inputStream);
+    }
+    
     public List<Object> getObjectMultiBulkReply() {
         flush();
         pipelinedCommands--;
-        return (List<Object>) Protocol.read(inputStream);
+        return getRawMultiBulkReply();
     }
     
     @SuppressWarnings("unchecked")
