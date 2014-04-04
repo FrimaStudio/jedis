@@ -1,7 +1,7 @@
 ## Frima Studio modifications ##
 We are using a forked version of the library to make Jedis's PubSub Thread-Safe.
 
-**EVERY MODIFICATION SHOULD BE DONE IN THE jedis-2.1.1-frima BRANCH!!!**
+**EVERY MODIFICATION SHOULD BE DONE IN THE jedis-2.4.2-frima BRANCH!!!**
 
 # Jedis
 
