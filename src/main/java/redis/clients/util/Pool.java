@@ -1,5 +1,7 @@
 package redis.clients.util;
 
+import java.io.Closeable;
+
 import org.apache.commons.pool2.PooledObjectFactory;
 import org.apache.commons.pool2.impl.GenericObjectPool;
 import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
@@ -7,7 +9,7 @@ import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
 import redis.clients.jedis.exceptions.JedisConnectionException;
 import redis.clients.jedis.exceptions.JedisException;
 
-public abstract class Pool<T> {
+public abstract class Pool<T> implements Closeable {
     protected GenericObjectPool<T> internalPool;
 
     /**
@@ -15,6 +17,15 @@ public abstract class Pool<T> {
      * internalPool yourself.
      */
     public Pool() {
+    }
+
+    @Override
+    public void close() {
+	closeInternalPool();
+    }
+
+    public boolean isClosed() {
+	return this.internalPool.isClosed();
     }
 
     public Pool(final GenericObjectPoolConfig poolConfig,
@@ -45,6 +56,9 @@ public abstract class Pool<T> {
     }
 
     public void returnResourceObject(final T resource) {
+	if (resource == null) {
+	    return;
+	}
 	try {
 	    internalPool.returnObject(resource);
 	} catch (Exception e) {
@@ -54,11 +68,15 @@ public abstract class Pool<T> {
     }
 
     public void returnBrokenResource(final T resource) {
-	returnBrokenResourceObject(resource);
+	if (resource != null) {
+	    returnBrokenResourceObject(resource);
+	}
     }
 
     public void returnResource(final T resource) {
-	returnResourceObject(resource);
+	if (resource != null) {
+	    returnResourceObject(resource);
+	}
     }
 
     public void destroy() {

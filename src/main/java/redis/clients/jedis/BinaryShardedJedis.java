@@ -110,6 +110,11 @@ public class BinaryShardedJedis extends Sharded<Jedis, JedisShardInfo>
 	return j.incrBy(key, integer);
     }
 
+    public Double incrByFloat(byte[] key, double integer) {
+	Jedis j = getShard(key);
+	return j.incrByFloat(key, integer);
+    }
+
     public Long incr(byte[] key) {
 	Jedis j = getShard(key);
 	return j.incr(key);
@@ -153,6 +158,11 @@ public class BinaryShardedJedis extends Sharded<Jedis, JedisShardInfo>
     public Long hincrBy(byte[] key, byte[] field, long value) {
 	Jedis j = getShard(key);
 	return j.hincrBy(key, field, value);
+    }
+
+    public Double hincrByFloat(byte[] key, byte[] field, double value) {
+	Jedis j = getShard(key);
+	return j.hincrByFloat(key, field, value);
     }
 
     public Boolean hexists(byte[] key, byte[] field) {
@@ -290,12 +300,18 @@ public class BinaryShardedJedis extends Sharded<Jedis, JedisShardInfo>
 	return j.srandmember(key);
     }
 
+    @Override
+    public List srandmember(byte[] key, int count) {
+	Jedis j = getShard(key);
+	return j.srandmember(key, count);
+    }
+
     public Long zadd(byte[] key, double score, byte[] member) {
 	Jedis j = getShard(key);
 	return j.zadd(key, score, member);
     }
 
-    public Long zadd(byte[] key, Map<Double, byte[]> scoreMembers) {
+    public Long zadd(byte[] key, Map<byte[], Double> scoreMembers) {
 	Jedis j = getShard(key);
 	return j.zadd(key, scoreMembers);
     }
@@ -475,6 +491,33 @@ public class BinaryShardedJedis extends Sharded<Jedis, JedisShardInfo>
 	return j.zremrangeByScore(key, start, end);
     }
 
+    @Override
+    public Long zlexcount(final byte[] key, final byte[] min, final byte[] max) {
+	Jedis j = getShard(key);
+	return j.zlexcount(key, min, max);
+    }
+
+    @Override
+    public Set<byte[]> zrangeByLex(final byte[] key, final byte[] min,
+	    final byte[] max) {
+	Jedis j = getShard(key);
+	return j.zrangeByLex(key, min, max);
+    }
+
+    @Override
+    public Set<byte[]> zrangeByLex(final byte[] key, final byte[] min,
+	    final byte[] max, final int offset, final int count) {
+	Jedis j = getShard(key);
+	return j.zrangeByLex(key, min, max, offset, count);
+    }
+
+    @Override
+    public Long zremrangeByLex(final byte[] key, final byte[] min,
+	    final byte[] max) {
+	Jedis j = getShard(key);
+	return j.zremrangeByLex(key, min, max);
+    }
+
     public Long linsert(byte[] key, LIST_POSITION where, byte[] pivot,
 	    byte[] value) {
 	Jedis j = getShard(key);
@@ -482,6 +525,12 @@ public class BinaryShardedJedis extends Sharded<Jedis, JedisShardInfo>
     }
 
     @Deprecated
+    /**
+     * This method is deprecated due to its error prone with multi
+     * and will be removed on next major release
+     * You can use pipelined() instead
+     * @see https://github.com/xetorthio/jedis/pull/498
+     */
     public List<Object> pipelined(ShardedJedisPipeline shardedJedisPipeline) {
 	shardedJedisPipeline.setShardedJedis(this);
 	shardedJedisPipeline.execute();
@@ -563,4 +612,17 @@ public class BinaryShardedJedis extends Sharded<Jedis, JedisShardInfo>
 	Jedis j = getShard(key);
 	return j.bitcount(key, start, end);
     }
+
+    @Override
+    public Long pfadd(final byte[] key, final byte[]... elements) {
+	Jedis j = getShard(key);
+	return j.pfadd(key, elements);
+    }
+
+    @Override
+    public long pfcount(final byte[] key) {
+	Jedis j = getShard(key);
+	return j.pfcount(key);
+    }
+
 }

@@ -1,27 +1,34 @@
 package redis.clients.jedis;
 
+import static redis.clients.jedis.Protocol.toByteArray;
+
+import java.io.Closeable;
+import java.net.URI;
+import java.util.AbstractMap;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
 import redis.clients.jedis.BinaryClient.LIST_POSITION;
 import redis.clients.jedis.exceptions.JedisDataException;
 import redis.clients.jedis.exceptions.JedisException;
 import redis.clients.util.JedisByteHashMap;
+import redis.clients.util.JedisURIHelper;
 import redis.clients.util.SafeEncoder;
 
-import java.net.URI;
-import java.util.*;
-
-import static redis.clients.jedis.Protocol.toByteArray;
-
-public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKeyBinaryCommands, AdvancedBinaryJedisCommands, BinaryScriptingCommands {
+public class BinaryJedis implements BasicCommands, BinaryJedisCommands,
+	MultiKeyBinaryCommands, AdvancedBinaryJedisCommands,
+	BinaryScriptingCommands, Closeable {
     protected Client client = null;
 
     public BinaryJedis(final String host) {
 	URI uri = URI.create(host);
 	if (uri.getScheme() != null && uri.getScheme().equals("redis")) {
-	    client = new Client(uri.getHost(), uri.getPort());
-	    client.auth(uri.getUserInfo().split(":", 2)[1]);
-	    client.getStatusCodeReply();
-	    client.select(Integer.parseInt(uri.getPath().split("/", 2)[1]));
-	    client.getStatusCodeReply();
+	    initializeClientFromURI(uri);
 	} else {
 	    client = new Client(host);
 	}
@@ -43,11 +50,28 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
     }
 
     public BinaryJedis(URI uri) {
+	initializeClientFromURI(uri);
+    }
+
+    public BinaryJedis(final URI uri, final int timeout) {
+	initializeClientFromURI(uri);
+	client.setTimeout(timeout);
+    }
+
+    private void initializeClientFromURI(URI uri) {
 	client = new Client(uri.getHost(), uri.getPort());
-	client.auth(uri.getUserInfo().split(":", 2)[1]);
-	client.getStatusCodeReply();
-	client.select(Integer.parseInt(uri.getPath().split("/", 2)[1]));
-	client.getStatusCodeReply();
+
+	String password = JedisURIHelper.getPassword(uri);
+	if (password != null) {
+	    client.auth(password);
+	    client.getStatusCodeReply();
+	}
+
+	Integer dbIndex = JedisURIHelper.getDBIndex(uri);
+	if (dbIndex > 0) {
+	    client.select(dbIndex);
+	    client.getStatusCodeReply();
+	}
     }
 
     public String ping() {
@@ -75,18 +99,23 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
     /**
      * Set the string value as value of the key. The string can't be longer than
      * 1073741824 bytes (1 GB).
+     * 
      * @param key
      * @param value
-     * @param nxxx NX|XX, NX -- Only set the key if it does not already exist.
-     *                    XX -- Only set the key if it already exist.
-     * @param expx EX|PX, expire time units: EX = seconds; PX = milliseconds
-     * @param time expire time in the units of {@param #expx}
+     * @param nxxx
+     *            NX|XX, NX -- Only set the key if it does not already exist. XX
+     *            -- Only set the key if it already exist.
+     * @param expx
+     *            EX|PX, expire time units: EX = seconds; PX = milliseconds
+     * @param time
+     *            expire time in the units of {@param #expx}
      * @return Status code reply
      */
-    public String set(final byte[] key, final byte[] value, final byte[] nxxx, final byte[] expx, final long time) {
-        checkIsInMulti();
-        client.set(key, value, nxxx, expx, time);
-        return client.getStatusCodeReply();
+    public String set(final byte[] key, final byte[] value, final byte[] nxxx,
+	    final byte[] expx, final long time) {
+	checkIsInMulti();
+	client.set(key, value, nxxx, expx, time);
+	return client.getStatusCodeReply();
     }
 
     /**
@@ -147,9 +176,9 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
     }
 
     public Long del(final byte[] key) {
-    checkIsInMulti();
-    client.del(key);
-    return client.getIntegerReply();
+	checkIsInMulti();
+	client.del(key);
+	return client.getIntegerReply();
     }
 
     /**
@@ -218,9 +247,7 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
     public Set<byte[]> keys(final byte[] pattern) {
 	checkIsInMulti();
 	client.keys(pattern);
-	final HashSet<byte[]> keySet = new HashSet<byte[]>(
-		client.getBinaryMultiBulkReply());
-	return keySet;
+	return new HashSet<byte[]>(client.getBinaryMultiBulkReply());
     }
 
     /**
@@ -484,7 +511,7 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
 
     /**
      * Set the the respective keys to the respective values. MSET will replace
-     * old values with new values, while {@link #msetnx(String...) MSETNX} will
+     * old values with new values, while {@link #msetnx(byte[]...) MSETNX} will
      * not perform any operation at all even if just a single key already
      * exists.
      * <p>
@@ -497,7 +524,7 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
      * either see the changes to both A and B at once, or no modification at
      * all.
      * 
-     * @see #msetnx(String...)
+     * @see #msetnx(byte[]...)
      * 
      * @param keysvalues
      * @return Status code reply Basically +OK as MSET can't fail
@@ -510,7 +537,7 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
 
     /**
      * Set the the respective keys to the respective values.
-     * {@link #mset(String...) MSET} will replace old values with new values,
+     * {@link #mset(byte[]...) MSET} will replace old values with new values,
      * while MSETNX will not perform any operation at all even if just a single
      * key already exists.
      * <p>
@@ -523,8 +550,8 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
      * either see the changes to both A and B at once, or no modification at
      * all.
      * 
-     * @see #mset(String...)
-     * 
+     * @see #mset(byte[]...)
+     *
      * @param keysvalues
      * @return Integer reply, specifically: 1 if the all the keys were set 0 if
      *         no key was set (at least one key already existed)
@@ -536,7 +563,7 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
     }
 
     /**
-     * IDECRBY work just like {@link #decr(String) INCR} but instead to
+     * DECRBY work just like {@link #decr(byte[]) INCR} but instead to
      * decrement by 1 the decrement is integer.
      * <p>
      * INCR commands are limited to 64 bit signed integers.
@@ -617,6 +644,37 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
 	checkIsInMulti();
 	client.incrBy(key, integer);
 	return client.getIntegerReply();
+    }
+
+    /**
+     * INCRBYFLOAT work just like {@link #incrBy(byte[], long)} INCRBY} but increments
+     * by floats instead of integers.
+     * <p>
+     * INCRBYFLOAT commands are limited to double precision floating point
+     * values.
+     * <p>
+     * Note: this is actually a string operation, that is, in Redis there are
+     * not "double" types. Simply the string stored at the key is parsed as a
+     * base double precision floating point value, incremented, and then
+     * converted back as a string. There is no DECRYBYFLOAT but providing a
+     * negative value will work as expected.
+     * <p>
+     * Time complexity: O(1)
+     * 
+     * @see #incr(byte[])
+     * @see #decr(byte[])
+     * @see #decrBy(byte[], long)
+     * 
+     * @param key the key to increment
+     * @param integer the value to increment by
+     * @return Integer reply, this commands will reply with the new value of key
+     *         after the increment.
+     */
+    public Double incrByFloat(final byte[] key, final double integer) {
+	checkIsInMulti();
+	client.incrByFloat(key, integer);
+	String dval = client.getBulkReply();
+	return (dval != null ? new Double(dval) : null);
     }
 
     /**
@@ -812,6 +870,33 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
     }
 
     /**
+     * Increment the number stored at field in the hash at key by a double
+     * precision floating point value. If key does not exist, a new key holding
+     * a hash is created. If field does not exist or holds a string, the value
+     * is set to 0 before applying the operation. Since the value argument is
+     * signed you can use this command to perform both increments and
+     * decrements.
+     * <p>
+     * The range of values supported by HINCRBYFLOAT is limited to double
+     * precision floating point values.
+     * <p>
+     * <b>Time complexity:</b> O(1)
+     * 
+     * @param key
+     * @param field
+     * @param value
+     * @return Double precision floating point reply The new value at field
+     *         after the increment operation.
+     */
+    public Double hincrByFloat(final byte[] key, final byte[] field,
+	    final double value) {
+	checkIsInMulti();
+	client.hincrByFloat(key, field, value);
+	final String dval = client.getBulkReply();
+	return (dval != null ? new Double(dval) : null);
+    }
+
+    /**
      * Test for existence of a specified field in a hash.
      * 
      * <b>Time complexity:</b> O(1)
@@ -885,8 +970,7 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
     public List<byte[]> hvals(final byte[] key) {
 	checkIsInMulti();
 	client.hvals(key);
-	final List<byte[]> lresult = client.getBinaryMultiBulkReply();
-	return lresult;
+	return client.getBinaryMultiBulkReply();
     }
 
     /**
@@ -1006,7 +1090,8 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
      * @return Multi bulk reply, specifically a list of elements in the
      *         specified range.
      */
-    public List<byte[]> lrange(final byte[] key, final long start, final long end) {
+    public List<byte[]> lrange(final byte[] key, final long start,
+	    final long end) {
 	checkIsInMulti();
 	client.lrange(key, start, end);
 	return client.getBinaryMultiBulkReply();
@@ -1090,7 +1175,7 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
      * O(N) (with N being the length of the list), setting the first or last
      * elements of the list is O(1).
      * 
-     * @see #lindex(byte[], int)
+     * @see #lindex(byte[], long)
      * 
      * @param key
      * @param index
@@ -1211,11 +1296,11 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
 
     /**
      * Return all the members (elements) of the set value stored at key. This is
-     * just syntax glue for {@link #sinter(String...) SINTER}.
+     * just syntax glue for {@link #sinter(byte[]...)} SINTER}.
      * <p>
      * Time complexity O(N)
      * 
-     * @param key
+     * @param key the key of the set
      * @return Multi bulk reply
      */
     public Set<byte[]> smembers(final byte[] key) {
@@ -1232,8 +1317,8 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
      * <p>
      * Time complexity O(1)
      * 
-     * @param key
-     * @param member
+     * @param key the key of the set
+     * @param member the set member to remove
      * @return Integer reply, specifically: 1 if the new element was removed 0
      *         if the new element was not a member of the set
      */
@@ -1326,7 +1411,7 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
     /**
      * Return the members of a set resulting from the intersection of all the
      * sets hold at the specified keys. Like in
-     * {@link #lrange(byte[], int, int) LRANGE} the result is sent to the client
+     * {@link #lrange(byte[], long, long)} LRANGE} the result is sent to the client
      * as a multi-bulk reply (see the protocol specification for more
      * information). If just a single key is specified, then this command
      * produces the same result as {@link #smembers(byte[]) SMEMBERS}. Actually
@@ -1350,7 +1435,7 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
     }
 
     /**
-     * This commnad works exactly like {@link #sinter(String...) SINTER} but
+     * This commnad works exactly like {@link #sinter(byte[]...) SINTER} but
      * instead of being returned the resulting set is sotred as dstkey.
      * <p>
      * Time complexity O(N*M) worst case where N is the cardinality of the
@@ -1368,7 +1453,7 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
 
     /**
      * Return the members of a set resulting from the union of all the sets hold
-     * at the specified keys. Like in {@link #lrange(byte[], int, int) LRANGE}
+     * at the specified keys. Like in {@link #lrange(byte[], long, long)} LRANGE}
      * the result is sent to the client as a multi-bulk reply (see the protocol
      * specification for more information). If just a single key is specified,
      * then this command produces the same result as {@link #smembers(byte[])
@@ -1390,7 +1475,7 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
     }
 
     /**
-     * This command works exactly like {@link #sunion(String...) SUNION} but
+     * This command works exactly like {@link #sunion(byte[]...) SUNION} but
      * instead of being returned the resulting set is stored as dstkey. Any
      * existing value in dstkey will be over-written.
      * <p>
@@ -1438,7 +1523,7 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
     }
 
     /**
-     * This command works exactly like {@link #sdiff(String...) SDIFF} but
+     * This command works exactly like {@link #sdiff(byte[]...) SDIFF} but
      * instead of being returned the resulting set is stored in dstkey.
      * 
      * @param dstkey
@@ -1468,11 +1553,11 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
 	client.srandmember(key);
 	return client.getBinaryBulkReply();
     }
-    
+
     public List<byte[]> srandmember(final byte[] key, final int count) {
-    checkIsInMulti();
-    client.srandmember(key, count);
-    return client.getBinaryMultiBulkReply();
+	checkIsInMulti();
+	client.srandmember(key, count);
+	return client.getBinaryMultiBulkReply();
     }
 
     /**
@@ -1502,7 +1587,7 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
 	return client.getIntegerReply();
     }
 
-    public Long zadd(final byte[] key, final Map<Double, byte[]> scoreMembers) {
+    public Long zadd(final byte[] key, final Map<byte[], Double> scoreMembers) {
 	checkIsInMulti();
 	client.zaddBinary(key, scoreMembers);
 	return client.getIntegerReply();
@@ -1632,16 +1717,14 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
 	    final long end) {
 	checkIsInMulti();
 	client.zrangeWithScores(key, start, end);
-	Set<Tuple> set = getBinaryTupledSet();
-	return set;
+	return getBinaryTupledSet();
     }
 
     public Set<Tuple> zrevrangeWithScores(final byte[] key, final long start,
 	    final long end) {
 	checkIsInMulti();
 	client.zrevrangeWithScores(key, start, end);
-	Set<Tuple> set = getBinaryTupledSet();
-	return set;
+	return getBinaryTupledSet();
     }
 
     /**
@@ -1682,17 +1765,18 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
 	return new Transaction(client);
     }
 
+    @Deprecated
+    /**
+     * This method is deprecated due to its error prone
+     * and will be removed on next major release
+     * You can use multi() instead
+     * @see https://github.com/xetorthio/jedis/pull/498
+     */
     public List<Object> multi(final TransactionBlock jedisTransaction) {
-	List<Object> results = null;
 	jedisTransaction.setClient(client);
-	try {
-	    client.multi();
-	    jedisTransaction.execute();
-	    results = jedisTransaction.exec();
-	} catch (Exception ex) {
-	    jedisTransaction.discard();
-	}
-	return results;
+	client.multi();
+	jedisTransaction.execute();
+	return jedisTransaction.exec();
     }
 
     protected void checkIsInMulti() {
@@ -1710,6 +1794,13 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
 	client.disconnect();
     }
 
+    public void resetState() {
+	if (client.isConnected()) {
+	    client.resetState();
+	    client.getAll();
+	}
+    }
+
     public String watch(final byte[]... keys) {
 	client.watch(keys);
 	return client.getStatusCodeReply();
@@ -1718,6 +1809,11 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
     public String unwatch() {
 	client.unwatch();
 	return client.getStatusCodeReply();
+    }
+
+    @Override
+    public void close() {
+	client.close();
     }
 
     /**
@@ -1886,7 +1982,7 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
      * <p>
      * Time complexity: O(1)
      * 
-     * @see #brpop(int, String...)
+     * @see #brpop(int, byte[]...)
      * 
      * @param timeout
      * @param keys
@@ -1899,18 +1995,17 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
      *         programming language used.
      */
     public List<byte[]> blpop(final int timeout, final byte[]... keys) {
-	checkIsInMulti();
-	final List<byte[]> args = new ArrayList<byte[]>();
-	for (final byte[] arg : keys) {
-	    args.add(arg);
-	}
-	args.add(Protocol.toByteArray(timeout));
+	return blpop(getArgsAddTimeout(timeout, keys));
+    }
 
-	client.blpop(args.toArray(new byte[args.size()][]));
-	client.setTimeoutInfinite();
-	final List<byte[]> multiBulkReply = client.getBinaryMultiBulkReply();
-	client.rollbackTimeout();
-	return multiBulkReply;
+    private byte[][] getArgsAddTimeout (int timeout, byte[][] keys) {
+	int size = keys.length;
+	final byte[][] args = new byte[size + 1][];
+	for (int at = 0; at != size; ++at) {
+	    args[at] = keys[at];
+	}
+	args[size] = Protocol.toByteArray(timeout);
+	return args;
     }
 
     /**
@@ -2015,7 +2110,7 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
      * <p>
      * Time complexity: O(1)
      * 
-     * @see #blpop(int, String...)
+     * @see #blpop(int, byte[]...)
      * 
      * @param timeout
      * @param keys
@@ -2028,59 +2123,46 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
      *         programming language used.
      */
     public List<byte[]> brpop(final int timeout, final byte[]... keys) {
-	checkIsInMulti();
-	final List<byte[]> args = new ArrayList<byte[]>();
-	for (final byte[] arg : keys) {
-	    args.add(arg);
-	}
-	args.add(Protocol.toByteArray(timeout));
-
-	client.brpop(args.toArray(new byte[args.size()][]));
-	client.setTimeoutInfinite();
-	final List<byte[]> multiBulkReply = client.getBinaryMultiBulkReply();
-	client.rollbackTimeout();
-
-	return multiBulkReply;
+	return brpop(getArgsAddTimeout(timeout, keys));
     }
 
+
+    /**
+     * @deprecated unusable command, this command will be removed in 3.0.0.
+     */
+    @Deprecated
     public List<byte[]> blpop(byte[] arg) {
-        checkIsInMulti();
-        byte[][] args = new byte[1][];
-        args[0] = arg;
-        client.blpop(args);
-        client.setTimeoutInfinite();
-        final List<byte[]> multiBulkReply = client.getBinaryMultiBulkReply();
-        client.rollbackTimeout();
-        return multiBulkReply;
+	return blpop(new byte[][]{arg});
     }
 
+    /**
+     * @deprecated unusable command, this command will be removed in 3.0.0.
+     */
+    @Deprecated
     public List<byte[]> brpop(byte[] arg) {
-        checkIsInMulti();
-        byte[][] args = new byte[1][];
-        args[0] = arg;
-        client.brpop(args);
-        client.setTimeoutInfinite();
-        final List<byte[]> multiBulkReply = client.getBinaryMultiBulkReply();
-        client.rollbackTimeout();
-        return multiBulkReply;
+	return brpop(new byte[][]{arg});
     }
 
     public List<byte[]> blpop(byte[]... args) {
-        checkIsInMulti();
-        client.blpop(args);
-        client.setTimeoutInfinite();
-        final List<byte[]> multiBulkReply = client.getBinaryMultiBulkReply();
-        client.rollbackTimeout();
-        return multiBulkReply;
+	checkIsInMulti();
+	client.blpop(args);
+	client.setTimeoutInfinite();
+	try {
+	    return client.getBinaryMultiBulkReply();
+	} finally {
+	    client.rollbackTimeout();
+	}
     }
 
     public List<byte[]> brpop(byte[]... args) {
-        checkIsInMulti();
-        client.brpop(args);
-        client.setTimeoutInfinite();
-        final List<byte[]> multiBulkReply = client.getBinaryMultiBulkReply();
-        client.rollbackTimeout();
-        return multiBulkReply;
+	checkIsInMulti();
+	client.brpop(args);
+	client.setTimeoutInfinite();
+	try {
+	    return client.getBinaryMultiBulkReply();
+	} finally {
+	    client.rollbackTimeout();
+	}
     }
 
     /**
@@ -2104,14 +2186,12 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
 	return client.getStatusCodeReply();
     }
 
+    @Deprecated
     /**
-     * Starts a pipeline, which is a very efficient way to send lots of command
-     * and read all the responses when you finish sending them. Try to avoid
-     * this version and use pipelined() when possible as it will give better
-     * performance.
-     * 
-     * @param jedisPipeline
-     * @return The results of the command in the same order you've run them.
+     * This method is deprecated due to its error prone with multi
+     * and will be removed on next major release
+     * You can use pipelined() instead
+     * @see https://github.com/xetorthio/jedis/pull/498
      */
     public List<Object> pipelined(final PipelineBlock jedisPipeline) {
 	jedisPipeline.setClient(client);
@@ -2126,15 +2206,15 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
     }
 
     public Long zcount(final byte[] key, final double min, final double max) {
-    	return zcount(key, toByteArray(min), toByteArray(max));
+	return zcount(key, toByteArray(min), toByteArray(max));
     }
-    
+
     public Long zcount(final byte[] key, final byte[] min, final byte[] max) {
-    	checkIsInMulti();
-    	client.zcount(key, min, max);
-    	return client.getIntegerReply();
+	checkIsInMulti();
+	client.zcount(key, min, max);
+	return client.getIntegerReply();
     }
-    
+
     /**
      * Return the all the elements in the sorted set at key with a score between
      * min and max (including elements with score equal to min or max).
@@ -2194,7 +2274,7 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
     public Set<byte[]> zrangeByScore(final byte[] key, final double min,
 	    final double max) {
 	return zrangeByScore(key, toByteArray(min), toByteArray(max));
-	}
+    }
 
     public Set<byte[]> zrangeByScore(final byte[] key, final byte[] min,
 	    final byte[] max) {
@@ -2261,15 +2341,16 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
      */
     public Set<byte[]> zrangeByScore(final byte[] key, final double min,
 	    final double max, final int offset, final int count) {
-	return zrangeByScore(key, toByteArray(min),toByteArray(max),offset, count);
+	return zrangeByScore(key, toByteArray(min), toByteArray(max), offset,
+		count);
     }
-    
+
     public Set<byte[]> zrangeByScore(final byte[] key, final byte[] min,
-    	    final byte[] max, final int offset, final int count) {
-    	checkIsInMulti();
-    	client.zrangeByScore(key, min, max, offset, count);
-    	return new LinkedHashSet<byte[]>(client.getBinaryMultiBulkReply());
-        }
+	    final byte[] max, final int offset, final int count) {
+	checkIsInMulti();
+	client.zrangeByScore(key, min, max, offset, count);
+	return new LinkedHashSet<byte[]>(client.getBinaryMultiBulkReply());
+    }
 
     /**
      * Return the all the elements in the sorted set at key with a score between
@@ -2331,14 +2412,13 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
 	    final double min, final double max) {
 	return zrangeByScoreWithScores(key, toByteArray(min), toByteArray(max));
     }
-    
+
     public Set<Tuple> zrangeByScoreWithScores(final byte[] key,
-    	    final byte[] min, final byte[] max) {
-    	checkIsInMulti();
-    	client.zrangeByScoreWithScores(key, min, max);
-    	Set<Tuple> set = getBinaryTupledSet();
-    	return set;
-        }
+	    final byte[] min, final byte[] max) {
+	checkIsInMulti();
+	client.zrangeByScoreWithScores(key, min, max);
+	return getBinaryTupledSet();
+    }
 
     /**
      * Return the all the elements in the sorted set at key with a score between
@@ -2399,17 +2479,17 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
     public Set<Tuple> zrangeByScoreWithScores(final byte[] key,
 	    final double min, final double max, final int offset,
 	    final int count) {
-	return zrangeByScoreWithScores(key, toByteArray(min), toByteArray(max), offset, count);
+	return zrangeByScoreWithScores(key, toByteArray(min), toByteArray(max),
+		offset, count);
     }
-    
+
     public Set<Tuple> zrangeByScoreWithScores(final byte[] key,
-    	    final byte[] min, final byte[] max, final int offset,
-    	    final int count) {
-    	checkIsInMulti();
-    	client.zrangeByScoreWithScores(key, min, max, offset, count);
-    	Set<Tuple> set = getBinaryTupledSet();
-    	return set;
-        }
+	    final byte[] min, final byte[] max, final int offset,
+	    final int count) {
+	checkIsInMulti();
+	client.zrangeByScoreWithScores(key, min, max, offset, count);
+	return getBinaryTupledSet();
+    }
 
     private Set<Tuple> getBinaryTupledSet() {
 	checkIsInMulti();
@@ -2437,33 +2517,35 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
 
     public Set<byte[]> zrevrangeByScore(final byte[] key, final double max,
 	    final double min, final int offset, final int count) {
-	return zrevrangeByScore(key, toByteArray(max), toByteArray(min), offset, count);
+	return zrevrangeByScore(key, toByteArray(max), toByteArray(min),
+		offset, count);
     }
-    
+
     public Set<byte[]> zrevrangeByScore(final byte[] key, final byte[] max,
-    	    final byte[] min, final int offset, final int count) {
-    	checkIsInMulti();
-    	client.zrevrangeByScore(key, max, min, offset, count);
-    	return new LinkedHashSet<byte[]>(client.getBinaryMultiBulkReply());
-        }
+	    final byte[] min, final int offset, final int count) {
+	checkIsInMulti();
+	client.zrevrangeByScore(key, max, min, offset, count);
+	return new LinkedHashSet<byte[]>(client.getBinaryMultiBulkReply());
+    }
 
     public Set<Tuple> zrevrangeByScoreWithScores(final byte[] key,
 	    final double max, final double min) {
-	return zrevrangeByScoreWithScores(key, toByteArray(max), toByteArray(min));
+	return zrevrangeByScoreWithScores(key, toByteArray(max),
+		toByteArray(min));
     }
 
     public Set<Tuple> zrevrangeByScoreWithScores(final byte[] key,
 	    final double max, final double min, final int offset,
 	    final int count) {
-    	return zrevrangeByScoreWithScores(key, toByteArray(max), toByteArray(min), offset, count);
+	return zrevrangeByScoreWithScores(key, toByteArray(max),
+		toByteArray(min), offset, count);
     }
-    
+
     public Set<Tuple> zrevrangeByScoreWithScores(final byte[] key,
-    	    final byte[] max, final byte[] min) {
+	    final byte[] max, final byte[] min) {
 	checkIsInMulti();
 	client.zrevrangeByScoreWithScores(key, max, min);
-	Set<Tuple> set = getBinaryTupledSet();
-	return set;
+	return getBinaryTupledSet();
     }
 
     public Set<Tuple> zrevrangeByScoreWithScores(final byte[] key,
@@ -2471,9 +2553,8 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
 	    final int count) {
 	checkIsInMulti();
 	client.zrevrangeByScoreWithScores(key, max, min, offset, count);
-	Set<Tuple> set = getBinaryTupledSet();
-	return set;
-    }    
+	return getBinaryTupledSet();
+    }
 
     /**
      * Remove all elements in the sorted set at key with rank between start and
@@ -2488,7 +2569,8 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
      * operation
      * 
      */
-    public Long zremrangeByRank(final byte[] key, final long start, final long end) {
+    public Long zremrangeByRank(final byte[] key, final long start,
+	    final long end) {
 	checkIsInMulti();
 	client.zremrangeByRank(key, start, end);
 	return client.getIntegerReply();
@@ -2512,13 +2594,13 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
 	    final double end) {
 	return zremrangeByScore(key, toByteArray(start), toByteArray(end));
     }
-    
+
     public Long zremrangeByScore(final byte[] key, final byte[] start,
-    	    final byte[] end) {
-    	checkIsInMulti();
-    	client.zremrangeByScore(key, start, end);
-    	return client.getIntegerReply();
-        }
+	    final byte[] end) {
+	checkIsInMulti();
+	client.zremrangeByScore(key, start, end);
+	return client.getIntegerReply();
+    }
 
     /**
      * Creates a union or intersection of N sorted sets given by keys k1 through
@@ -2526,10 +2608,10 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
      * input keys N, before passing the input keys and the other (optional)
      * arguments.
      * <p>
-     * As the terms imply, the {@link #zinterstore(String, String...)
+     * As the terms imply, the {@link #zinterstore(byte[], byte[]...)}
      * ZINTERSTORE} command requires an element to be present in each of the
      * given inputs to be inserted in the result. The
-     * {@link #zunionstore(String, String...) ZUNIONSTORE} command inserts all
+     * {@link #zunionstore(byte[], byte[]...)}} command inserts all
      * elements across all inputs.
      * <p>
      * Using the WEIGHTS option, it is possible to add weight to each input
@@ -2548,10 +2630,10 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
      * sizes of the input sorted sets, and M being the number of elements in the
      * resulting sorted set
      * 
-     * @see #zunionstore(String, String...)
-     * @see #zunionstore(String, ZParams, String...)
-     * @see #zinterstore(String, String...)
-     * @see #zinterstore(String, ZParams, String...)
+     * @see #zunionstore(byte[], byte[]...)
+     * @see #zunionstore(byte[], ZParams, byte[]...)
+     * @see #zinterstore(byte[], byte[]...)
+     * @see #zinterstore(byte[], ZParams, byte[]...)
      * 
      * @param dstkey
      * @param sets
@@ -2570,10 +2652,10 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
      * input keys N, before passing the input keys and the other (optional)
      * arguments.
      * <p>
-     * As the terms imply, the {@link #zinterstore(String, String...)
+     * As the terms imply, the {@link #zinterstore(byte[], byte[]...)
      * ZINTERSTORE} command requires an element to be present in each of the
      * given inputs to be inserted in the result. The
-     * {@link #zunionstore(String, String...) ZUNIONSTORE} command inserts all
+     * {@link #zunionstore(byte[], byte[]...) ZUNIONSTORE} command inserts all
      * elements across all inputs.
      * <p>
      * Using the WEIGHTS option, it is possible to add weight to each input
@@ -2592,10 +2674,10 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
      * sizes of the input sorted sets, and M being the number of elements in the
      * resulting sorted set
      * 
-     * @see #zunionstore(String, String...)
-     * @see #zunionstore(String, ZParams, String...)
-     * @see #zinterstore(String, String...)
-     * @see #zinterstore(String, ZParams, String...)
+     * @see #zunionstore(byte[], byte[]...)
+     * @see #zunionstore(byte[], ZParams, byte[]...)
+     * @see #zinterstore(byte[], byte[]...)
+     * @see #zinterstore(byte[], ZParams, byte[]...)
      * 
      * @param dstkey
      * @param sets
@@ -2616,10 +2698,10 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
      * input keys N, before passing the input keys and the other (optional)
      * arguments.
      * <p>
-     * As the terms imply, the {@link #zinterstore(String, String...)
+     * As the terms imply, the {@link #zinterstore(byte[], byte[]...)
      * ZINTERSTORE} command requires an element to be present in each of the
      * given inputs to be inserted in the result. The
-     * {@link #zunionstore(String, String...) ZUNIONSTORE} command inserts all
+     * {@link #zunionstore(byte[], byte[]...) ZUNIONSTORE} command inserts all
      * elements across all inputs.
      * <p>
      * Using the WEIGHTS option, it is possible to add weight to each input
@@ -2638,10 +2720,10 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
      * sizes of the input sorted sets, and M being the number of elements in the
      * resulting sorted set
      * 
-     * @see #zunionstore(String, String...)
-     * @see #zunionstore(String, ZParams, String...)
-     * @see #zinterstore(String, String...)
-     * @see #zinterstore(String, ZParams, String...)
+     * @see #zunionstore(byte[], byte[]...)
+     * @see #zunionstore(byte[], ZParams, byte[]...)
+     * @see #zinterstore(byte[], byte[]...)
+     * @see #zinterstore(byte[], ZParams, byte[]...)
      * 
      * @param dstkey
      * @param sets
@@ -2660,10 +2742,10 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
      * input keys N, before passing the input keys and the other (optional)
      * arguments.
      * <p>
-     * As the terms imply, the {@link #zinterstore(String, String...)
+     * As the terms imply, the {@link #zinterstore(byte[], byte[]...)
      * ZINTERSTORE} command requires an element to be present in each of the
      * given inputs to be inserted in the result. The
-     * {@link #zunionstore(String, String...) ZUNIONSTORE} command inserts all
+     * {@link #zunionstore(byte[], byte[]...) ZUNIONSTORE} command inserts all
      * elements across all inputs.
      * <p>
      * Using the WEIGHTS option, it is possible to add weight to each input
@@ -2682,10 +2764,10 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
      * sizes of the input sorted sets, and M being the number of elements in the
      * resulting sorted set
      * 
-     * @see #zunionstore(String, String...)
-     * @see #zunionstore(String, ZParams, String...)
-     * @see #zinterstore(String, String...)
-     * @see #zinterstore(String, ZParams, String...)
+     * @see #zunionstore(byte[], byte[]...)
+     * @see #zunionstore(byte[], ZParams, byte[]...)
+     * @see #zinterstore(byte[], byte[]...)
+     * @see #zinterstore(byte[], ZParams, byte[]...)
      * 
      * @param dstkey
      * @param sets
@@ -2697,6 +2779,37 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
 	    final byte[]... sets) {
 	checkIsInMulti();
 	client.zinterstore(dstkey, params, sets);
+	return client.getIntegerReply();
+    }
+
+    @Override
+    public Long zlexcount(final byte[] key, final byte[] min, final byte[] max) {
+	checkIsInMulti();
+	client.zlexcount(key, min, max);
+	return client.getIntegerReply();
+    }
+
+    @Override
+    public Set<byte[]> zrangeByLex(final byte[] key, final byte[] min,
+	    final byte[] max) {
+	checkIsInMulti();
+	client.zrangeByLex(key, min, max);
+	return new LinkedHashSet<byte[]>(client.getBinaryMultiBulkReply());
+    }
+
+    @Override
+    public Set<byte[]> zrangeByLex(final byte[] key, final byte[] min,
+	    final byte[] max, final int offset, final int count) {
+	checkIsInMulti();
+	client.zrangeByLex(key, min, max, offset, count);
+	return new LinkedHashSet<byte[]>(client.getBinaryMultiBulkReply());
+    }
+
+    @Override
+    public Long zremrangeByLex(final byte[] key, final byte[] min,
+	    final byte[] max) {
+	checkIsInMulti();
+	client.zremrangeByLex(key, min, max);
 	return client.getIntegerReply();
     }
 
@@ -2789,7 +2902,7 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
      */
     public String shutdown() {
 	client.shutdown();
-	String status = null;
+	String status;
 	try {
 	    status = client.getStatusCodeReply();
 	} catch (JedisException ex) {
@@ -2842,7 +2955,7 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
 	client.info();
 	return client.getBulkReply();
     }
-    
+
     public String info(final String section) {
 	client.info(section);
 	return client.getBulkReply();
@@ -2955,7 +3068,7 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
      * configuration parameters are supported.
      * <p>
      * The list of configuration parameters supported by CONFIG SET can be
-     * obtained issuing a {@link #configGet(String) CONFIG GET *} command.
+     * obtained issuing a {@link #configGet(byte[]) CONFIG GET *} command.
      * <p>
      * The configuration set using CONFIG SET is immediately loaded by the Redis
      * server that will start acting as specified starting from the next
@@ -3059,9 +3172,11 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
     public byte[] brpoplpush(byte[] source, byte[] destination, int timeout) {
 	client.brpoplpush(source, destination, timeout);
 	client.setTimeoutInfinite();
-	byte[] reply = client.getBinaryBulkReply();
-	client.rollbackTimeout();
-	return reply;
+	try {
+	    return client.getBinaryBulkReply();
+	} finally {
+	    client.rollbackTimeout();
+	}
     }
 
     /**
@@ -3078,8 +3193,8 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
     }
 
     public Boolean setbit(byte[] key, long offset, byte[] value) {
-    client.setbit(key, offset, value);
-    return client.getIntegerReply() == 1;
+	client.setbit(key, offset, value);
+	return client.getIntegerReply() == 1;
     }
 
     /**
@@ -3092,6 +3207,16 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
     public Boolean getbit(byte[] key, long offset) {
 	client.getbit(key, offset);
 	return client.getIntegerReply() == 1;
+    }
+
+    public Long bitpos(final byte[] key, final boolean value) {
+	return bitpos(key, value, new BitPosParams());
+    }
+
+    public Long bitpos(final byte[] key, final boolean value,
+	    final BitPosParams params) {
+	client.bitpos(key, value, params);
+	return client.getIntegerReply();
     }
 
     public Long setrange(byte[] key, long offset, byte[] value) {
@@ -3111,14 +3236,20 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
 
     public void subscribe(BinaryJedisPubSub jedisPubSub, byte[]... channels) {
 	client.setTimeoutInfinite();
-	jedisPubSub.proceed(client, channels);
-	client.rollbackTimeout();
+	try {
+	    jedisPubSub.proceed(client, channels);
+	} finally {
+	    client.rollbackTimeout();
+	}
     }
 
     public void psubscribe(BinaryJedisPubSub jedisPubSub, byte[]... patterns) {
 	client.setTimeoutInfinite();
-	jedisPubSub.proceedWithPatterns(client, patterns);
-	client.rollbackTimeout();
+	try {
+	    jedisPubSub.proceedWithPatterns(client, patterns);
+	} finally {
+	    client.rollbackTimeout();
+	}
     }
 
     public Long getDB() {
@@ -3133,19 +3264,18 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
      * @return Script result
      */
     public Object eval(byte[] script, List<byte[]> keys, List<byte[]> args) {
-	client.setTimeoutInfinite();
-	client.eval(script, toByteArray(keys.size()), getParams(keys, args));
-	return client.getOne();
+	return eval(script, toByteArray(keys.size()), getParams(keys, args));
     }
 
     private byte[][] getParams(List<byte[]> keys, List<byte[]> args) {
-	int keyCount = keys.size();
-	byte[][] params = new byte[keyCount + args.size()][];
+	final int keyCount = keys.size();
+	final int argCount = args.size();
+	byte[][] params = new byte[keyCount + argCount][];
 
 	for (int i = 0; i < keyCount; i++)
 	    params[i] = keys.get(i);
 
-	for (int i = 0; i < keys.size(); i++)
+	for (int i = 0; i < argCount; i++)
 	    params[keyCount + i] = args.get(i);
 
 	return params;
@@ -3153,49 +3283,38 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
 
     public Object eval(byte[] script, byte[] keyCount, byte[]... params) {
 	client.setTimeoutInfinite();
-	client.eval(script, keyCount, params);
-	return client.getOne();
+	try {
+	    client.eval(script, keyCount, params);
+	    return client.getOne();
+	} finally {
+	    client.rollbackTimeout();
+	}
     }
 
     public Object eval(byte[] script, int keyCount, byte[]... params) {
-        client.setTimeoutInfinite();
-        client.eval(script, SafeEncoder.encode(Integer.toString(keyCount)), params);
-        return client.getOne();
+	return eval(script, toByteArray(keyCount), params);
     }
 
     public Object eval(byte[] script) {
-        client.setTimeoutInfinite();
-        client.eval(script, 0);
-        return client.getOne();
+	return eval(script, 0);
     }
 
     public Object evalsha(byte[] sha1) {
-        client.setTimeoutInfinite();
-        client.evalsha(sha1, 0);
-        return client.getOne();
+	return evalsha(sha1, 1);
     }
-		
-		public Object evalsha(byte[] sha1, List<byte[]> keys, List<byte[]> args) {
 
-			int keyCount = keys == null ? 0 : keys.size();
-			int argCount = args == null ? 0 : args.size();
-
-			byte[][] params = new byte[keyCount + argCount][];
-
-			for (int i = 0; i < keyCount; i++)
-				params[i] = keys.get(i);
-
-			for (int i = 0; i < argCount; i++)
-				params[keyCount + i] = args.get(i);
-
-
-			return evalsha(sha1, keyCount, params);
-		}
+    public Object evalsha(byte[] sha1, List<byte[]> keys, List<byte[]> args) {
+	return evalsha(sha1, keys.size(), getParams(keys, args));
+    }
 
     public Object evalsha(byte[] sha1, int keyCount, byte[]... params) {
-        client.setTimeoutInfinite();
-        client.evalsha(sha1, keyCount, params);
-        return client.getOne();
+	client.setTimeoutInfinite();
+	try {
+	    client.evalsha(sha1, keyCount, params);
+	    return client.getOne();
+	} finally {
+	    client.rollbackTimeout();
+	}
     }
 
     public String scriptFlush() {
@@ -3205,7 +3324,7 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
 
     public List<Long> scriptExists(byte[]... sha1) {
 	client.scriptExists(sha1);
-    return client.getIntegerMultiBulkReply();
+	return client.getIntegerMultiBulkReply();
     }
 
     public byte[] scriptLoad(byte[] script) {
@@ -3237,133 +3356,128 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
 	client.slowlogGet(entries);
 	return client.getBinaryMultiBulkReply();
     }
-    
-    public Long objectRefcount(byte[] key) {
-		client.objectRefcount(key);
-		return client.getIntegerReply();
-	}
-	
-	public byte[] objectEncoding(byte[] key) {
-		client.objectEncoding(key);
-		return client.getBinaryBulkReply();
-	}
 
-	public Long objectIdletime(byte[] key) {
-		client.objectIdletime(key);
-		return client.getIntegerReply();
-	}
+    public Long objectRefcount(byte[] key) {
+	client.objectRefcount(key);
+	return client.getIntegerReply();
+    }
+
+    public byte[] objectEncoding(byte[] key) {
+	client.objectEncoding(key);
+	return client.getBinaryBulkReply();
+    }
+
+    public Long objectIdletime(byte[] key) {
+	client.objectIdletime(key);
+	return client.getIntegerReply();
+    }
 
     public Long bitcount(final byte[] key) {
-        client.bitcount(key);
-        return client.getIntegerReply();
+	client.bitcount(key);
+	return client.getIntegerReply();
     }
 
     public Long bitcount(final byte[] key, long start, long end) {
-        client.bitcount(key, start, end);
-        return client.getIntegerReply();
+	client.bitcount(key, start, end);
+	return client.getIntegerReply();
     }
 
     public Long bitop(BitOP op, final byte[] destKey, byte[]... srcKeys) {
-        client.bitop(op, destKey, srcKeys);
-        return client.getIntegerReply();
+	client.bitop(op, destKey, srcKeys);
+	return client.getIntegerReply();
     }
-    
+
     public byte[] dump(final byte[] key) {
-    	checkIsInMulti();
-    	client.dump(key);
-    	return client.getBinaryBulkReply();
+	checkIsInMulti();
+	client.dump(key);
+	return client.getBinaryBulkReply();
     }
-    
-    public String restore(final byte[] key, final int ttl, final byte[] serializedValue) {
-    	checkIsInMulti();
-    	client.restore(key, ttl, serializedValue);
-    	return client.getStatusCodeReply();
+
+    public String restore(final byte[] key, final int ttl,
+	    final byte[] serializedValue) {
+	checkIsInMulti();
+	client.restore(key, ttl, serializedValue);
+	return client.getStatusCodeReply();
     }
-    
+
+    @Deprecated
     public Long pexpire(final byte[] key, final int milliseconds) {
-	    checkIsInMulti();
-	    client.pexpire(key, milliseconds);
-	    return client.getIntegerReply();
+	return pexpire(key, (long) milliseconds);
     }
-    
+
+    public Long pexpire(final byte[] key, final long milliseconds) {
+	checkIsInMulti();
+	client.pexpire(key, milliseconds);
+	return client.getIntegerReply();
+    }
+
     public Long pexpireAt(final byte[] key, final long millisecondsTimestamp) {
-    	checkIsInMulti();
-    	client.pexpireAt(key, millisecondsTimestamp);
-    	return client.getIntegerReply();
+	checkIsInMulti();
+	client.pexpireAt(key, millisecondsTimestamp);
+	return client.getIntegerReply();
     }
-    
+
     public Long pttl(final byte[] key) {
-    	checkIsInMulti();
-    	client.pttl(key);
-    	return client.getIntegerReply();
+	checkIsInMulti();
+	client.pttl(key);
+	return client.getIntegerReply();
     }
-    
-    public Double incrByFloat(final byte[] key, final double increment) {
-    	checkIsInMulti();
-    	client.incrByFloat(key, increment);
-    	String relpy = client.getBulkReply();
-    	return (relpy != null ? new Double(relpy) : null);    
+
+    public String psetex(final byte[] key, final int milliseconds,
+	    final byte[] value) {
+	checkIsInMulti();
+	client.psetex(key, milliseconds, value);
+	return client.getStatusCodeReply();
     }
-    
-    public String psetex(final byte[] key, final int milliseconds, final byte[] value) {
-    	checkIsInMulti();
-    	client.psetex(key, milliseconds, value);
-    	return client.getStatusCodeReply();
-    }
-    
+
     public String set(final byte[] key, final byte[] value, final byte[] nxxx) {
-        checkIsInMulti();
-        client.set(key, value, nxxx);
-        return client.getStatusCodeReply();
+	checkIsInMulti();
+	client.set(key, value, nxxx);
+	return client.getStatusCodeReply();
     }
-    
-    public String set(final byte[] key, final byte[] value, final byte[] nxxx, final byte[] expx, final int time) {
-        checkIsInMulti();
-        client.set(key, value, nxxx, expx, time);
-        return client.getStatusCodeReply();
+
+    public String set(final byte[] key, final byte[] value, final byte[] nxxx,
+	    final byte[] expx, final int time) {
+	checkIsInMulti();
+	client.set(key, value, nxxx, expx, time);
+	return client.getStatusCodeReply();
     }
-    
+
     public String clientKill(final byte[] client) {
-    	checkIsInMulti();
-    	this.client.clientKill(client);
-    	return this.client.getStatusCodeReply();
+	checkIsInMulti();
+	this.client.clientKill(client);
+	return this.client.getStatusCodeReply();
     }
-    
+
     public String clientGetname() {
-    	checkIsInMulti();
-    	client.clientGetname();
-    	return client.getBulkReply();
+	checkIsInMulti();
+	client.clientGetname();
+	return client.getBulkReply();
     }
-    
+
     public String clientList() {
-    	checkIsInMulti();
-    	client.clientList();
-    	return client.getBulkReply();
+	checkIsInMulti();
+	client.clientList();
+	return client.getBulkReply();
     }
-    
+
     public String clientSetname(final byte[] name) {
-    	checkIsInMulti();
-    	client.clientSetname(name);
-    	return client.getBulkReply();
+	checkIsInMulti();
+	client.clientSetname(name);
+	return client.getBulkReply();
     }
-    
+
     public List<String> time() {
-    	checkIsInMulti();
-    	client.time();
-    	return client.getMultiBulkReply();
+	checkIsInMulti();
+	client.time();
+	return client.getMultiBulkReply();
     }
-    
-    public String migrate(final byte[] host, final int port, final byte[] key, final int destinationDb, final int timeout) {
-    	checkIsInMulti();
-    	client.migrate(host, port, key, destinationDb, timeout);
-    	return client.getStatusCodeReply();
-    }
-    
-    public Double hincrByFloat(final byte[] key, final byte[] field, double increment) {
-    	checkIsInMulti();
-    	client.hincrByFloat(key, field, increment);
-    	String relpy = client.getBulkReply();
-    	return (relpy != null ? new Double(relpy) : null);
+
+    public String migrate(final byte[] host, final int port, final byte[] key,
+	    final int destinationDb, final int timeout) {
+	checkIsInMulti();
+	client.migrate(host, port, key, destinationDb, timeout);
+	return client.getStatusCodeReply();
     }
 
     /**
@@ -3374,9 +3488,104 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands, MultiKey
      * so I had to change the name of the method. Sorry :S
      */
     public Long waitReplicas(int replicas, long timeout) {
-    	checkIsInMulti();
-    	client.waitReplicas(replicas, timeout);
-    	return client.getIntegerReply();
+	checkIsInMulti();
+	client.waitReplicas(replicas, timeout);
+	return client.getIntegerReply();
     }
 
+    @Override
+    public Long pfadd(final byte[] key, final byte[]... elements) {
+	checkIsInMulti();
+	client.pfadd(key, elements);
+	return client.getIntegerReply();
+    }
+
+    @Override
+    public long pfcount(final byte[] key) {
+	checkIsInMulti();
+	client.pfcount(key);
+	return client.getIntegerReply();
+    }
+
+    @Override
+    public String pfmerge(final byte[] destkey, final byte[]... sourcekeys) {
+	checkIsInMulti();
+	client.pfmerge(destkey, sourcekeys);
+	return client.getStatusCodeReply();
+    }
+
+    @Override
+    public Long pfcount(byte[]... keys) {
+	checkIsInMulti();
+	client.pfcount(keys);
+	return client.getIntegerReply();
+    }
+
+    public ScanResult<byte[]> scan(final byte[] cursor) {
+	return scan(cursor, new ScanParams());
+    }
+
+    public ScanResult<byte[]> scan(final byte[] cursor, final ScanParams params) {
+	checkIsInMulti();
+	client.scan(cursor, params);
+	List<Object> result = client.getObjectMultiBulkReply();
+	byte[] newcursor = (byte[]) result.get(0);
+	List<byte[]> rawResults = (List<byte[]>) result.get(1);
+	return new ScanResult<byte[]>(newcursor, rawResults);
+    }
+
+    public ScanResult<Map.Entry<byte[], byte[]>> hscan(final byte[] key,
+	    final byte[] cursor) {
+	return hscan(key, cursor, new ScanParams());
+    }
+
+    public ScanResult<Map.Entry<byte[], byte[]>> hscan(final byte[] key,
+	    final byte[] cursor, final ScanParams params) {
+	checkIsInMulti();
+	client.hscan(key, cursor, params);
+	List<Object> result = client.getObjectMultiBulkReply();
+	byte[] newcursor = (byte[]) result.get(0);
+	List<Map.Entry<byte[], byte[]>> results = new ArrayList<Map.Entry<byte[], byte[]>>();
+	List<byte[]> rawResults = (List<byte[]>) result.get(1);
+	Iterator<byte[]> iterator = rawResults.iterator();
+	while (iterator.hasNext()) {
+	    results.add(new AbstractMap.SimpleEntry<byte[], byte[]>(iterator
+		    .next(), iterator.next()));
+	}
+	return new ScanResult<Map.Entry<byte[], byte[]>>(newcursor, results);
+    }
+
+    public ScanResult<byte[]> sscan(final byte[] key, final byte[] cursor) {
+	return sscan(key, cursor, new ScanParams());
+    }
+
+    public ScanResult<byte[]> sscan(final byte[] key, final byte[] cursor,
+	    final ScanParams params) {
+	checkIsInMulti();
+	client.sscan(key, cursor, params);
+	List<Object> result = client.getObjectMultiBulkReply();
+	byte[] newcursor = (byte[]) result.get(0);
+	List<byte[]> rawResults = (List<byte[]>) result.get(1);
+	return new ScanResult<byte[]>(newcursor, rawResults);
+    }
+
+    public ScanResult<Tuple> zscan(final byte[] key, final byte[] cursor) {
+	return zscan(key, cursor, new ScanParams());
+    }
+
+    public ScanResult<Tuple> zscan(final byte[] key, final byte[] cursor,
+	    final ScanParams params) {
+	checkIsInMulti();
+	client.zscan(key, cursor, params);
+	List<Object> result = client.getObjectMultiBulkReply();
+	byte[] newcursor = (byte[]) result.get(0);
+	List<Tuple> results = new ArrayList<Tuple>();
+	List<byte[]> rawResults = (List<byte[]>) result.get(1);
+	Iterator<byte[]> iterator = rawResults.iterator();
+	while (iterator.hasNext()) {
+	    results.add(new Tuple(iterator.next(), Double.valueOf(SafeEncoder
+		    .encode(iterator.next()))));
+	}
+	return new ScanResult<Tuple>(newcursor, results);
+    }
 }

@@ -47,6 +47,8 @@ public interface BinaryJedisCommands {
 
     Long incrBy(byte[] key, long integer);
 
+    Double incrByFloat(byte[] key, double value);
+
     Long incr(byte[] key);
 
     Long append(byte[] key, byte[] value);
@@ -64,6 +66,8 @@ public interface BinaryJedisCommands {
     List<byte[]> hmget(byte[] key, byte[]... fields);
 
     Long hincrBy(byte[] key, byte[] field, long value);
+
+    Double hincrByFloat(byte[] key, byte[] field, double value);
 
     Boolean hexists(byte[] key, byte[] field);
 
@@ -111,11 +115,13 @@ public interface BinaryJedisCommands {
 
     byte[] srandmember(byte[] key);
 
+    List<byte[]> srandmember(final byte[] key, final int count);
+
     Long strlen(byte[] key);
 
     Long zadd(byte[] key, double score, byte[] member);
 
-    Long zadd(byte[] key, Map<Double, byte[]> scoreMembers);
+    Long zadd(byte[] key, Map<byte[], Double> scoreMembers);
 
     Set<byte[]> zrange(byte[] key, long start, long end);
 
@@ -191,6 +197,15 @@ public interface BinaryJedisCommands {
 
     Long zremrangeByScore(byte[] key, byte[] start, byte[] end);
 
+    Long zlexcount(final byte[] key, final byte[] min, final byte[] max);
+
+    Set<byte[]> zrangeByLex(final byte[] key, final byte[] min, final byte[] max);
+
+    Set<byte[]> zrangeByLex(final byte[] key, final byte[] min,
+	    final byte[] max, int offset, int count);
+
+    Long zremrangeByLex(final byte[] key, final byte[] min, final byte[] max);
+
     Long linsert(byte[] key, Client.LIST_POSITION where, byte[] pivot,
 	    byte[] value);
 
@@ -198,8 +213,18 @@ public interface BinaryJedisCommands {
 
     Long rpushx(byte[] key, byte[]... arg);
 
+
+    /**
+     * @deprecated unusable command, this command will be removed in 3.0.0.
+     */
+    @Deprecated
     List<byte[]> blpop(byte[] arg);
 
+
+    /**
+     * @deprecated unusable command, this command will be removed in 3.0.0.
+     */
+    @Deprecated
     List<byte[]> brpop(byte[] arg);
 
     Long del(byte[] key);
@@ -211,4 +236,8 @@ public interface BinaryJedisCommands {
     Long bitcount(final byte[] key);
 
     Long bitcount(final byte[] key, long start, long end);
+
+    Long pfadd(final byte[] key, final byte[]... elements);
+
+    long pfcount(final byte[] key);
 }
