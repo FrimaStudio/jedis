@@ -1,3 +1,5 @@
+** Currently trying unforked Jedis 2.9, keeping this for posterity **
+
 Modified to fix synchronization issue : https://github.com/xetorthio/jedis/pull/196
 
 [![Build Status](https://travis-ci.org/xetorthio/jedis.png?branch=master)](https://travis-ci.org/xetorthio/jedis)
