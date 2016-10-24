@@ -18,17 +18,17 @@ import redis.clients.util.JedisURIHelper;
 /**
  * PoolableObjectFactory custom impl.
  */
-class JedisFactory implements PooledObjectFactory<Jedis> {
-  private final AtomicReference<HostAndPort> hostAndPort = new AtomicReference<HostAndPort>();
-  private final int connectionTimeout;
-  private final int soTimeout;
-  private final String password;
-  private final int database;
-  private final String clientName;
-  private final boolean ssl;
-  private final SSLSocketFactory sslSocketFactory;
-  private SSLParameters sslParameters;
-  private HostnameVerifier hostnameVerifier;
+public class JedisFactory implements PooledObjectFactory<Jedis> {
+  protected final AtomicReference<HostAndPort> hostAndPort = new AtomicReference<HostAndPort>();
+  protected final int connectionTimeout;
+  protected final int soTimeout;
+  protected final String password;
+  protected final int database;
+  protected final String clientName;
+  protected final boolean ssl;
+  protected final SSLSocketFactory sslSocketFactory;
+  protected final SSLParameters sslParameters;
+  protected final HostnameVerifier hostnameVerifier;
 
   public JedisFactory(final String host, final int port, final int connectionTimeout,
       final int soTimeout, final String password, final int database, final String clientName,
@@ -98,9 +98,7 @@ class JedisFactory implements PooledObjectFactory<Jedis> {
 
   @Override
   public PooledObject<Jedis> makeObject() throws Exception {
-    final HostAndPort hostAndPort = this.hostAndPort.get();
-    final Jedis jedis = new Jedis(hostAndPort.getHost(), hostAndPort.getPort(), connectionTimeout,
-        soTimeout, ssl, sslSocketFactory, sslParameters, hostnameVerifier);
+    final Jedis jedis = makeJedis();
 
     try {
       jedis.connect();
@@ -120,6 +118,12 @@ class JedisFactory implements PooledObjectFactory<Jedis> {
 
     return new DefaultPooledObject<Jedis>(jedis);
 
+  }
+
+  protected Jedis makeJedis() {
+    final HostAndPort hostAndPort = this.hostAndPort.get();
+    return new Jedis(hostAndPort.getHost(), hostAndPort.getPort(), connectionTimeout,
+            soTimeout, ssl, sslSocketFactory, sslParameters, hostnameVerifier);
   }
 
   @Override
